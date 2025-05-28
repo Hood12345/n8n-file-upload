@@ -31,10 +31,10 @@ def allowed_file(filename):
 # --- Upload endpoint ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'data' not in request.files:
+    if 'file' not in request.files:
         return jsonify({"error": "No file part in request"}), 400
 
-    file = request.files['data']
+    file = request.files['file']
 
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
@@ -46,7 +46,9 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_name)
         file.save(file_path)
 
-        file_url = f"{request.host_url}static/{secure_name}"
+        # Force HTTPS for mobile compatibility
+        base_url = request.host_url.replace("http://", "https://")
+        file_url = f"{base_url}static/{secure_name}"
         return jsonify({"success": True, "url": file_url}), 200
     else:
         return jsonify({"error": "File type not allowed"}), 400
