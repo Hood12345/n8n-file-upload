@@ -92,6 +92,40 @@ def serve_static(filename):
 # --- Actual forced download ---
 @app.route('/file-download/<path:filename>', methods=['GET'])
 def file_download(filename):
+    fallback_ui = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Download File</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; padding: 40px; text-align: center; }}
+            a.download-button {{
+                display: inline-block;
+                padding: 12px 24px;
+                margin-top: 20px;
+                font-size: 18px;
+                color: white;
+                background-color: #007BFF;
+                text-decoration: none;
+                border-radius: 6px;
+            }}
+        </style>
+    </head>
+    <body>
+        <h2>Your download will begin shortly.</h2>
+        <p>If it doesn't, click the button below:</p>
+        <a class="download-button" href="/force-download/{filename}">Download File</a>
+        <script>
+            window.location.href = "/force-download/{filename}";
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(fallback_ui)
+
+# --- Force-download endpoint (triggered via JS or button) ---
+@app.route('/force-download/<path:filename>', methods=['GET'])
+def force_download(filename):
     return send_from_directory(
         app.config['UPLOAD_FOLDER'],
         filename,
