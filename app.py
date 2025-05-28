@@ -48,7 +48,7 @@ def extract_filename_parts(filename):
 @app.route('/upload', methods=['POST'])
 @limiter.limit("10/minute")
 def upload_file():
-    file = request.files.get('data') or request.files.get('file')
+    file = request.files.get('file') or request.files.get('data')
 
     if not file:
         return jsonify({"error": "No file part in request"}), 400
@@ -68,7 +68,7 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_name)
         file.save(file_path)
 
-        file_url = f"{request.url_root.replace('http://', 'https://')}static/{secure_name}"
+        file_url = f"{request.url_root.replace('http://', 'https://')}file-download/{secure_name}"
         return jsonify({"success": True, "url": file_url}), 200
     else:
         return jsonify({"error": "File type not allowed"}), 400
@@ -89,7 +89,7 @@ def serve_static(filename):
     # Redirect to file-download which triggers browser download
     return redirect(f"/file-download/{filename}", code=302)
 
-# --- Actual forced download ---
+# --- Actual forced download with UI fallback ---
 @app.route('/file-download/<path:filename>', methods=['GET'])
 def file_download(filename):
     fallback_ui = f"""
@@ -114,7 +114,7 @@ def file_download(filename):
     <body>
         <h2>Your download will begin shortly.</h2>
         <p>If it doesn't, click the button below:</p>
-        <a class="download-button" href="/force-download/{filename}">Download File</a>
+        <a class="download-button" href="/force-download/{filename}" download>Download File</a>
         <script>
             window.location.href = "/force-download/{filename}";
         </script>
