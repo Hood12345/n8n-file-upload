@@ -68,7 +68,7 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_name)
         file.save(file_path)
 
-        file_url = f"https://{request.host}/static/{secure_name}"
+        file_url = f"{request.url_root.replace('http://', 'https://')}static/{secure_name}"
         return jsonify({"success": True, "url": file_url}), 200
     else:
         return jsonify({"error": "File type not allowed"}), 400
