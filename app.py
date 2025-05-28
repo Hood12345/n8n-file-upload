@@ -5,7 +5,6 @@ from flask_limiter.util import get_remote_address
 import os
 import uuid
 import time
-import magic
 import threading
 
 # --- Config ---
@@ -57,11 +56,9 @@ def upload_file():
         return jsonify({"error": "No file selected"}), 400
 
     if file and allowed_file(file.filename):
-        # MIME type check
-        mime = magic.from_buffer(file.read(2048), mime=True)
-        if not (mime.startswith("video/") or mime.startswith("image/")):
+        # MIME type check using file.mimetype
+        if not (file.mimetype.startswith("video/") or file.mimetype.startswith("image/")):
             return jsonify({"error": "Invalid MIME type"}), 400
-        file.seek(0)
 
         ext = file.filename.rsplit('.', 1)[1].lower()
         expiry = get_expiry_timestamp()
