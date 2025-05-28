@@ -19,7 +19,8 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024  # 500MB limit
 
 # --- Rate Limiting ---
-limiter = Limiter(app, key_func=get_remote_address)
+limiter = Limiter(key_func=get_remote_address)
+limiter.init_app(app)
 
 # --- Create static directory if missing ---
 if not os.path.exists(UPLOAD_FOLDER):
