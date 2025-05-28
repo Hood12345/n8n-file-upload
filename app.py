@@ -48,10 +48,10 @@ def extract_filename_parts(filename):
 @app.route('/upload', methods=['POST'])
 @limiter.limit("10/minute")
 def upload_file():
-    if 'data' not in request.files:
-        return jsonify({"error": "No file part in request"}), 400
+    file = request.files.get('data') or request.files.get('file')
 
-    file = request.files['data']
+    if not file:
+        return jsonify({"error": "No file part in request"}), 400
 
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
