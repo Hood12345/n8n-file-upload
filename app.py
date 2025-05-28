@@ -17,7 +17,7 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024  # 500MB limit
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# --- Enable CORS for mobile/browser download ---
+# --- Enable CORS for browser/mobile download ---
 @app.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -31,10 +31,10 @@ def allowed_file(filename):
 # --- Upload endpoint ---
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
+    if 'data' not in request.files:
         return jsonify({"error": "No file part in request"}), 400
 
-    file = request.files['file']
+    file = request.files['data']
 
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
@@ -46,17 +46,19 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_name)
         file.save(file_path)
 
-        # Force HTTPS for mobile compatibility
-        base_url = request.host_url.replace("http://", "https://")
-        file_url = f"{base_url}static/{secure_name}"
+        file_url = f"{request.host_url}static/{secure_name}"
         return jsonify({"success": True, "url": file_url}), 200
     else:
         return jsonify({"error": "File type not allowed"}), 400
 
-# --- Serve files ---
+# --- Serve files as forced download ---
 @app.route('/static/<path:filename>', methods=['GET'])
 def serve_static(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    return send_from_directory(
+        app.config['UPLOAD_FOLDER'],
+        filename,
+        as_attachment=True  # Force browser/mobile to download the file
+    )
 
 # --- Healthcheck ---
 @app.route('/', methods=['GET'])
