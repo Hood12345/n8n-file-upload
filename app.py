@@ -1,38 +1,66 @@
 from flask import Flask, request, send_from_directory, jsonify
+from werkzeug.utils import secure_filename
 import os
 import uuid
 
-# Create the app
+# --- Config ---
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "static")
+ALLOWED_EXTENSIONS = {'mp4', 'mov', 'jpg', 'jpeg', 'png'}
+MAX_FILE_SIZE_MB = 500
+
+# --- App setup ---
 app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024  # 500MB limit
 
-# Create the upload folder if it doesn't exist
-UPLOAD_FOLDER = "static"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# --- Create static directory if missing ---
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
-# Upload route
-@app.route("/upload", methods=["POST"])
-def upload():
-    file = request.files.get("file")
-    if not file:
-        return jsonify({"error": "No file uploaded"}), 400
+# --- Enable CORS for mobile/browser download ---
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
 
-    # Generate unique filename
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(file_path)
+# --- Helpers ---
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-    # Generate public download link
-    base_url = request.host_url.rstrip("/")
-    return jsonify({
-        "success": True,
-        "url": f"{base_url}/static/{filename}"
-    })
+# --- Upload endpoint ---
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'data' not in request.files:
+        return jsonify({"error": "No file part in request"}), 400
 
-# Serve uploaded files
-@app.route("/static/<filename>")
-def serve_file(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename)
+    file = request.files['data']
 
-# ✅ This is the fix that allows Railway to connect properly
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    if file and allowed_file(file.filename):
+        ext = file.filename.rsplit('.', 1)[1].lower()
+        unique_name = f"{uuid.uuid4()}.{ext}"
+        secure_name = secure_filename(unique_name)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_name)
+        file.save(file_path)
+
+        file_url = f"{request.host_url}static/{secure_name}"
+        return jsonify({"success": True, "url": file_url}), 200
+    else:
+        return jsonify({"error": "File type not allowed"}), 400
+
+# --- Serve files ---
+@app.route('/static/<path:filename>', methods=['GET'])
+def serve_static(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# --- Healthcheck ---
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({"status": "running"}), 200
+
+# --- Launch ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host='0.0.0.0', port=5000)
