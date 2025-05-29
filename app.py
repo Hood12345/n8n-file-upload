@@ -2,6 +2,7 @@ from flask import Flask, request, send_from_directory, jsonify, abort, render_te
 from werkzeug.utils import secure_filename, safe_join
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from urllib.parse import unquote
 import os
 import uuid
 import time
@@ -91,6 +92,7 @@ def serve_static(filename):
 # --- Actual forced download with UI fallback ---
 @app.route('/file-download/<path:filename>', methods=['GET'])
 def file_download(filename):
+    filename = unquote(filename)  # iOS fix
     file_path = safe_join(app.config['UPLOAD_FOLDER'], filename)
     if not file_path or not os.path.isfile(file_path):
         app.logger.error(f"[NOT FOUND] Tried to download missing file: {filename}")
@@ -137,6 +139,7 @@ def file_download(filename):
 # --- Force-download endpoint ---
 @app.route('/force-download/<path:filename>', methods=['GET'])
 def force_download(filename):
+    filename = unquote(filename)  # iOS fix
     return send_from_directory(
         app.config['UPLOAD_FOLDER'],
         filename,
