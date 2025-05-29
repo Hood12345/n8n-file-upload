@@ -10,7 +10,7 @@ import threading
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "static")
 ALLOWED_EXTENSIONS = {'mp4', 'mov', 'jpg', 'jpeg', 'png'}
 MAX_FILE_SIZE_MB = 500
-FILE_EXPIRY_SECONDS = 3600  # 1 hour
+FILE_EXPIRY_SECONDS = 86400  # 24 hours
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
