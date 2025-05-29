@@ -1,4 +1,4 @@
-from flask import Flask, request, send_from_directory, jsonify, abort, render_template_string, redirect
+from flask import Flask, request, send_from_directory, jsonify, abort, render_template_string
 from werkzeug.utils import secure_filename, safe_join
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -19,7 +19,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024  # 500MB limit
 
 # --- Rate Limiting ---
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(get_remote_address)
 limiter.init_app(app)
 
 # --- Create static directory if missing ---
@@ -57,7 +57,6 @@ def upload_file():
         return jsonify({"error": "No file selected"}), 400
 
     if file and allowed_file(file.filename):
-        # MIME type check using file.mimetype
         if not (file.mimetype.startswith("video/") or file.mimetype.startswith("image/")):
             return jsonify({"error": "Invalid MIME type"}), 400
 
@@ -87,7 +86,7 @@ def serve_static(filename):
         app.logger.warning(f"[EXPIRED] {filename} expired and removed")
         abort(410, description="File has expired")
 
-    return redirect(f"/file-download/{filename}", code=302)
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # --- Actual forced download with UI fallback ---
 @app.route('/file-download/<path:filename>', methods=['GET'])
@@ -97,38 +96,45 @@ def file_download(filename):
         app.logger.error(f"[NOT FOUND] Tried to download missing file: {filename}")
         abort(404, description="File not found")
 
-    fallback_ui = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Download File</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; padding: 40px; text-align: center; }}
-            a.download-button {{
-                display: inline-block;
-                padding: 12px 24px;
-                margin-top: 20px;
-                font-size: 18px;
-                color: white;
-                background-color: #007BFF;
-                text-decoration: none;
-                border-radius: 6px;
-            }}
-        </style>
-    </head>
-    <body>
-        <h2>Your download will begin shortly.</h2>
-        <p>If it doesn't, click the button below:</p>
-        <a class="download-button" href="/force-download/{filename}" download>Download File</a>
-        <script>
-            window.location.href = "/force-download/{filename}";
-        </script>
-    </body>
-    </html>
-    """
-    return render_template_string(fallback_ui)
+    is_ios_safari = "Safari" in request.headers.get('User-Agent', '') and "Mobile" in request.headers.get('User-Agent', '')
 
-# --- Force-download endpoint (triggered via JS or button) ---
+    if is_ios_safari:
+        fallback_ui = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Download File</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; padding: 40px; text-align: center; }}
+                a.download-button {{
+                    display: inline-block;
+                    padding: 12px 24px;
+                    margin-top: 20px;
+                    font-size: 18px;
+                    color: white;
+                    background-color: #007BFF;
+                    text-decoration: none;
+                    border-radius: 6px;
+                }}
+            </style>
+        </head>
+        <body>
+            <h2>Your download will begin shortly.</h2>
+            <p>If it doesn't, click the button below:</p>
+            <a class="download-button" href="/force-download/{filename}" download>Download File</a>
+        </body>
+        </html>
+        """
+        return render_template_string(fallback_ui)
+    else:
+        return send_from_directory(
+            app.config['UPLOAD_FOLDER'],
+            filename,
+            as_attachment=True,
+            download_name=f"download.{filename.rsplit('.', 1)[1]}"
+        )
+
+# --- Force-download endpoint ---
 @app.route('/force-download/<path:filename>', methods=['GET'])
 def force_download(filename):
     return send_from_directory(
@@ -141,7 +147,7 @@ def force_download(filename):
 # --- Cleanup expired files in background ---
 def cleanup_expired_files():
     while True:
-        time.sleep(300)  # Check every 5 minutes
+        time.sleep(300)
         for fname in os.listdir(UPLOAD_FOLDER):
             if "__" in fname:
                 try:
