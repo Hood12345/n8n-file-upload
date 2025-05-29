@@ -1,7 +1,5 @@
-from flask import Flask, request, send_from_directory, jsonify, abort, render_template_string
-from werkzeug.utils import secure_filename, safe_join
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
+from flask import Flask, request, send_file, jsonify
+from werkzeug.utils import secure_filename
 from urllib.parse import unquote
 import os
 import uuid
@@ -12,27 +10,15 @@ import threading
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "static")
 ALLOWED_EXTENSIONS = {'mp4', 'mov', 'jpg', 'jpeg', 'png'}
 MAX_FILE_SIZE_MB = 500
-FILE_EXPIRY_SECONDS = 3600  # 1 hour expiry
+FILE_EXPIRY_SECONDS = 3600  # 1 hour
 
-# --- App setup ---
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024
 
-# --- Rate Limiting ---
-limiter = Limiter(get_remote_address)
-limiter.init_app(app)
-
-# --- Create static directory if missing ---
+# Create folder if not exists
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
-
-# --- Enable CORS ---
-@app.after_request
-def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-    return response
 
 # --- Helpers ---
 def allowed_file(filename):
@@ -45,122 +31,69 @@ def extract_filename_parts(filename):
     parts = filename.split("__")
     return parts[0], int(parts[1].split('.')[0]) if len(parts) > 1 else 0
 
-# --- Upload endpoint ---
+# --- Upload Endpoint ---
 @app.route('/upload', methods=['POST'])
-@limiter.limit("10/minute")
-def upload_file():
+def upload():
     file = request.files.get('file') or request.files.get('data')
-    if not file:
-        return jsonify({"error": "No file part in request"}), 400
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-    if file and allowed_file(file.filename):
-        if not (file.mimetype.startswith("video/") or file.mimetype.startswith("image/")):
-            return jsonify({"error": "Invalid MIME type"}), 400
+    if not file or file.filename == '':
+        return jsonify({"error": "No file"}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"error": "Invalid file type"}), 400
 
-        ext = file.filename.rsplit('.', 1)[1].lower()
-        expiry = get_expiry_timestamp()
-        unique_name = f"{uuid.uuid4()}__{expiry}.{ext}"
-        secure_name = secure_filename(unique_name)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_name)
-        file.save(file_path)
+    ext = file.filename.rsplit('.', 1)[1].lower()
+    expiry = get_expiry_timestamp()
+    unique_name = f"{uuid.uuid4()}__{expiry}.{ext}"
+    safe_name = secure_filename(unique_name)
+    path = os.path.join(app.config['UPLOAD_FOLDER'], safe_name)
+    file.save(path)
 
-        # ✅ SAFER for iOS: use query string version
-        file_url = f"{request.url_root.replace('http://', 'https://')}file-download?file={secure_name}"
-        return jsonify({"success": True, "url": file_url}), 200
-    else:
-        return jsonify({"error": "File type not allowed"}), 400
+    # ✅ Always return query URL
+    url = f"{request.url_root.replace('http://', 'https://')}download?file={safe_name}"
+    return jsonify({"success": True, "url": url})
 
-# --- Static access with expiry check ---
-@app.route('/static/<path:filename>', methods=['GET'])
-def serve_static(filename):
-    if ".." in filename or "/" in filename:
-        abort(400, description="Invalid filename")
-    name_part, expiry_timestamp = extract_filename_parts(filename)
-    if time.time() > expiry_timestamp:
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        app.logger.warning(f"[EXPIRED] {filename} expired and removed")
-        abort(410, description="File has expired")
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+# --- iPhone-Safe Download Endpoint ---
+@app.route('/download', methods=['GET'])
+def download():
+    raw = request.args.get("file")
+    if not raw:
+        return "Missing file param", 400
 
-# --- /file-download using PATH (still here for legacy) ---
-@app.route('/file-download/<path:filename>', methods=['GET'])
-def file_download_path(filename):
-    filename = unquote(filename)
-    file_path = safe_join(app.config['UPLOAD_FOLDER'], filename)
+    filename = unquote(raw)
+    path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
-    print("[DEBUG] PATH - Incoming filename:", filename)
-    print("[DEBUG] PATH - File path:", file_path)
-    print("[DEBUG] PATH - Exists:", os.path.isfile(file_path))
+    try:
+        _, expiry = extract_filename_parts(filename)
+        if time.time() > expiry:
+            if os.path.exists(path):
+                os.remove(path)
+            return "File expired", 410
 
-    if not file_path or not os.path.isfile(file_path):
-        return f"File not found<br>Decoded filename: {filename}<br>Path: {file_path}", 404
+        if not os.path.isfile(path):
+            return "File not found", 404
 
-    return send_from_directory(
-        app.config['UPLOAD_FOLDER'],
-        filename,
-        as_attachment=True,
-        download_name=f"download.{filename.rsplit('.', 1)[1]}"
-    )
+        return send_file(path, as_attachment=True)
+    except Exception as e:
+        return f"Error: {str(e)}", 500
 
-# --- ✅ SAFER /file-download?file=... endpoint ---
-@app.route('/file-download', methods=['GET'])
-def file_download_query():
-    raw_filename = request.args.get("file")
-    if not raw_filename:
-        return "Missing file parameter", 400
-
-    filename = unquote(raw_filename)
-    file_path = safe_join(app.config['UPLOAD_FOLDER'], filename)
-
-    print("[DEBUG] QUERY - Filename:", filename)
-    print("[DEBUG] QUERY - File path:", file_path)
-    print("[DEBUG] QUERY - Exists:", os.path.isfile(file_path))
-
-    if not file_path or not os.path.isfile(file_path):
-        return f"File not found<br>Decoded filename: {filename}<br>Path: {file_path}", 404
-
-    return send_from_directory(
-        app.config['UPLOAD_FOLDER'],
-        filename,
-        as_attachment=True,
-        download_name=f"download.{filename.rsplit('.', 1)[1]}"
-    )
-
-# --- /force-download endpoint (still available) ---
-@app.route('/force-download/<path:filename>', methods=['GET', 'POST'])
-def force_download(filename):
-    filename = unquote(filename)
-    return send_from_directory(
-        app.config['UPLOAD_FOLDER'],
-        filename,
-        as_attachment=True,
-        download_name=f"download.{filename.rsplit('.', 1)[1]}"
-    )
-
-# --- Background cleanup thread ---
-def cleanup_expired_files():
+# --- Auto-delete old files ---
+def cleanup():
     while True:
         time.sleep(300)
         for fname in os.listdir(UPLOAD_FOLDER):
             if "__" in fname:
                 try:
-                    _, expiry = extract_filename_parts(fname)
-                    if time.time() > expiry:
+                    _, exp = extract_filename_parts(fname)
+                    if time.time() > exp:
                         os.remove(os.path.join(UPLOAD_FOLDER, fname))
-                except Exception:
+                except:
                     continue
 
-cleanup_thread = threading.Thread(target=cleanup_expired_files, daemon=True)
-cleanup_thread.start()
+threading.Thread(target=cleanup, daemon=True).start()
 
 # --- Healthcheck ---
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({"status": "running"}), 200
+@app.route('/')
+def health():
+    return jsonify({"status": "running"})
 
-# --- Launch ---
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host="0.0.0.0", port=5000)
