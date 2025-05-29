@@ -84,6 +84,7 @@ def serve_static(filename):
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         if os.path.exists(file_path):
             os.remove(file_path)
+        app.logger.warning(f"[EXPIRED] {filename} expired and removed")
         abort(410, description="File has expired")
 
     # Redirect to file-download which triggers browser download
@@ -92,6 +93,11 @@ def serve_static(filename):
 # --- Actual forced download with UI fallback ---
 @app.route('/file-download/<path:filename>', methods=['GET'])
 def file_download(filename):
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    if not os.path.exists(file_path):
+        app.logger.error(f"[NOT FOUND] Tried to download missing file: {filename}")
+        abort(404, description="File not found")
+
     fallback_ui = f"""
     <!DOCTYPE html>
     <html>
