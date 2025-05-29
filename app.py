@@ -17,7 +17,7 @@ FILE_EXPIRY_SECONDS = 3600  # 1 hour expiry
 # --- App setup ---
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024  # 500MB limit
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024
 
 # --- Rate Limiting ---
 limiter = Limiter(get_remote_address)
@@ -27,7 +27,7 @@ limiter.init_app(app)
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# --- Enable CORS for mobile/browser download ---
+# --- Enable CORS ---
 @app.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -50,13 +50,10 @@ def extract_filename_parts(filename):
 @limiter.limit("10/minute")
 def upload_file():
     file = request.files.get('file') or request.files.get('data')
-
     if not file:
         return jsonify({"error": "No file part in request"}), 400
-
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
-
     if file and allowed_file(file.filename):
         if not (file.mimetype.startswith("video/") or file.mimetype.startswith("image/")):
             return jsonify({"error": "Invalid MIME type"}), 400
@@ -68,17 +65,17 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_name)
         file.save(file_path)
 
-        file_url = f"{request.url_root.replace('http://', 'https://')}file-download/{secure_name}"
+        # ✅ SAFER for iOS: use query string version
+        file_url = f"{request.url_root.replace('http://', 'https://')}file-download?file={secure_name}"
         return jsonify({"success": True, "url": file_url}), 200
     else:
         return jsonify({"error": "File type not allowed"}), 400
 
-# --- Serve files with forced download and expiry check ---
+# --- Static access with expiry check ---
 @app.route('/static/<path:filename>', methods=['GET'])
 def serve_static(filename):
     if ".." in filename or "/" in filename:
         abort(400, description="Invalid filename")
-
     name_part, expiry_timestamp = extract_filename_parts(filename)
     if time.time() > expiry_timestamp:
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -86,60 +83,21 @@ def serve_static(filename):
             os.remove(file_path)
         app.logger.warning(f"[EXPIRED] {filename} expired and removed")
         abort(410, description="File has expired")
-
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# --- Actual forced download with UI fallback ---
+# --- /file-download using PATH (still here for legacy) ---
 @app.route('/file-download/<path:filename>', methods=['GET'])
-def file_download(filename):
-    filename = unquote(filename)  # iOS fix
+def file_download_path(filename):
+    filename = unquote(filename)
     file_path = safe_join(app.config['UPLOAD_FOLDER'], filename)
+
+    print("[DEBUG] PATH - Incoming filename:", filename)
+    print("[DEBUG] PATH - File path:", file_path)
+    print("[DEBUG] PATH - Exists:", os.path.isfile(file_path))
+
     if not file_path or not os.path.isfile(file_path):
-        app.logger.error(f"[NOT FOUND] Tried to download missing file: {filename}")
-        abort(404, description="File not found")
+        return f"File not found<br>Decoded filename: {filename}<br>Path: {file_path}", 404
 
-    is_ios_safari = "Safari" in request.headers.get('User-Agent', '') and "Mobile" in request.headers.get('User-Agent', '')
-
-    if is_ios_safari:
-        fallback_ui = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Download File</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; padding: 40px; text-align: center; }}
-                a.download-button {{
-                    display: inline-block;
-                    padding: 12px 24px;
-                    margin-top: 20px;
-                    font-size: 18px;
-                    color: white;
-                    background-color: #007BFF;
-                    text-decoration: none;
-                    border-radius: 6px;
-                }}
-            </style>
-        </head>
-        <body>
-            <h2>Your download will begin shortly.</h2>
-            <p>If it doesn't, click the button below:</p>
-            <a class="download-button" href="/force-download/{filename}" download>Download File</a>
-        </body>
-        </html>
-        """
-        return render_template_string(fallback_ui)
-    else:
-        return send_from_directory(
-            app.config['UPLOAD_FOLDER'],
-            filename,
-            as_attachment=True,
-            download_name=f"download.{filename.rsplit('.', 1)[1]}"
-        )
-
-# --- Force-download endpoint ---
-@app.route('/force-download/<path:filename>', methods=['GET'])
-def force_download(filename):
-    filename = unquote(filename)  # iOS fix
     return send_from_directory(
         app.config['UPLOAD_FOLDER'],
         filename,
@@ -147,7 +105,42 @@ def force_download(filename):
         download_name=f"download.{filename.rsplit('.', 1)[1]}"
     )
 
-# --- Cleanup expired files in background ---
+# --- ✅ SAFER /file-download?file=... endpoint ---
+@app.route('/file-download', methods=['GET'])
+def file_download_query():
+    raw_filename = request.args.get("file")
+    if not raw_filename:
+        return "Missing file parameter", 400
+
+    filename = unquote(raw_filename)
+    file_path = safe_join(app.config['UPLOAD_FOLDER'], filename)
+
+    print("[DEBUG] QUERY - Filename:", filename)
+    print("[DEBUG] QUERY - File path:", file_path)
+    print("[DEBUG] QUERY - Exists:", os.path.isfile(file_path))
+
+    if not file_path or not os.path.isfile(file_path):
+        return f"File not found<br>Decoded filename: {filename}<br>Path: {file_path}", 404
+
+    return send_from_directory(
+        app.config['UPLOAD_FOLDER'],
+        filename,
+        as_attachment=True,
+        download_name=f"download.{filename.rsplit('.', 1)[1]}"
+    )
+
+# --- /force-download endpoint (still available) ---
+@app.route('/force-download/<path:filename>', methods=['GET', 'POST'])
+def force_download(filename):
+    filename = unquote(filename)
+    return send_from_directory(
+        app.config['UPLOAD_FOLDER'],
+        filename,
+        as_attachment=True,
+        download_name=f"download.{filename.rsplit('.', 1)[1]}"
+    )
+
+# --- Background cleanup thread ---
 def cleanup_expired_files():
     while True:
         time.sleep(300)
