@@ -5,6 +5,21 @@ import os
 import uuid
 import threading
 import time
+from functools import wraps
+
+# --- API Key Protection ---
+API_KEY = os.getenv("UPLOAD_API_KEY", "a920f5e9cb7d4e2eb8a1f0b25a89e0c9")  # Replace or set in Railway
+
+def require_api_key():
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            key = request.headers.get("X-API-Key") or request.args.get("api_key")
+            if key != API_KEY:
+                return jsonify({"error": "Forbidden: Invalid API Key"}), 403
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
 
 # --- Config ---
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "static")
@@ -25,6 +40,7 @@ def allowed_file(filename):
 
 # --- Upload endpoint ---
 @app.route('/upload', methods=['POST'])
+@require_api_key()
 def upload():
     file = request.files.get('file') or request.files.get('data')
     if not file or file.filename == '':
@@ -43,6 +59,7 @@ def upload():
 
 # --- Download endpoint (no expiry) ---
 @app.route('/download', methods=['GET'])
+@require_api_key()
 def download():
     raw = request.args.get("file")
     if not raw:
