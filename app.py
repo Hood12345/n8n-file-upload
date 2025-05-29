@@ -1,5 +1,5 @@
 from flask import Flask, request, send_from_directory, jsonify, abort, render_template_string, redirect
-from werkzeug.utils import secure_filename
+from werkzeug.utils import secure_filename, safe_join
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import os
@@ -87,14 +87,13 @@ def serve_static(filename):
         app.logger.warning(f"[EXPIRED] {filename} expired and removed")
         abort(410, description="File has expired")
 
-    # Redirect to file-download which triggers browser download
     return redirect(f"/file-download/{filename}", code=302)
 
 # --- Actual forced download with UI fallback ---
 @app.route('/file-download/<path:filename>', methods=['GET'])
 def file_download(filename):
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    if not os.path.exists(file_path):
+    file_path = safe_join(app.config['UPLOAD_FOLDER'], filename)
+    if not file_path or not os.path.isfile(file_path):
         app.logger.error(f"[NOT FOUND] Tried to download missing file: {filename}")
         abort(404, description="File not found")
 
